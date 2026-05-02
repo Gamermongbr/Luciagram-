@@ -1142,6 +1142,7 @@ const PostItem: React.FC<PostItemProps> = ({ post, profile, onToggleLike, onProf
                 onWaiting={() => setIsMediaLoading(true)}
                 onPlaying={() => setIsMediaLoading(false)}
                 onError={() => { setIsMediaLoading(false); setHasError(true); }}
+                referrerPolicy="no-referrer"
               />
               {!isGalleryMode && (
                 <div className="absolute top-3 right-3 bg-black/50 p-1.5 rounded-full pointer-events-none">
@@ -1379,6 +1380,7 @@ function FullscreenImageViewer({
               loop 
               playsInline
               crossOrigin="anonymous"
+              referrerPolicy="no-referrer"
             />
           ) : (
             <img 
@@ -1602,6 +1604,7 @@ const ReelItem: React.FC<{
           onWaiting={() => setIsMediaLoading(true)}
           onPlaying={() => setIsMediaLoading(false)}
           onError={() => { setIsMediaLoading(false); setHasError(true); }}
+          referrerPolicy="no-referrer"
         />
       ) : (
         <div className="h-full w-full bg-zinc-900" />
@@ -2187,6 +2190,24 @@ export default function App() {
   const [showMenu, setShowMenu] = useState(false);
   const [deferredPrompt, setDeferredPrompt] = useState<any>(null);
   const [isOnline, setIsOnline] = useState(navigator.onLine);
+  const [isAppInstalled, setIsAppInstalled] = useState(false);
+  const [isInIframe, setIsInIframe] = useState(false);
+
+  useEffect(() => {
+    // Check if in iframe
+    try {
+      if (window.self !== window.top) {
+        setIsInIframe(true);
+      }
+    } catch (e) {
+      setIsInIframe(true);
+    }
+    
+    // Check if already installed
+    if (window.matchMedia('(display-mode: standalone)').matches || (window.navigator as any).standalone === true) {
+      setIsAppInstalled(true);
+    }
+  }, []);
 
   useEffect(() => {
     const handleOnline = () => setIsOnline(true);
@@ -2215,14 +2236,26 @@ export default function App() {
   }, []);
 
   const installApp = async () => {
+    if (isInIframe) {
+      alert("App installation is blocked inside this preview frame. Please open the app in a new tab first.");
+      window.open(window.location.href, '_blank');
+      return;
+    }
+    
     if (deferredPrompt) {
       deferredPrompt.prompt();
       const { outcome } = await deferredPrompt.userChoice;
       if (outcome === 'accepted') {
         setDeferredPrompt(null);
+        setIsAppInstalled(true);
       }
     } else {
-      alert("Installation prompt not available. This usually means the app is already installed, or your browser requires manual installation (like 'Add to Home Screen' in Safari).");
+      // If no prompt, check if we can trigger manual instruction or show the browser native dialog
+      if (isAppInstalled) {
+        alert("The app is already installed on your device!");
+      } else {
+        alert("To install Intragram Native App:\n\n1. On Android: Tap the three dots (⋮) in Chrome and select 'Install app'.\n2. On iPhone: Tap the Share icon in Safari and select 'Add to Home Screen'.");
+      }
     }
   };
 
@@ -2730,6 +2763,8 @@ export default function App() {
             setMyProfile={setMyProfile}
             onInstall={installApp}
             canInstall={!!deferredPrompt}
+            isAppInstalled={isAppInstalled}
+            isInIframe={isInIframe}
           />
         )}
 
@@ -3076,14 +3111,18 @@ function SettingsView({
   myProfile, 
   setMyProfile,
   onInstall,
-  canInstall
+  canInstall,
+  isAppInstalled,
+  isInIframe
 }: { 
   onOpenDevPanel: () => void, 
   onBack: () => void, 
   myProfile: Profile, 
   setMyProfile: (p: Profile) => void,
   onInstall: () => void,
-  canInstall: boolean
+  canInstall: boolean,
+  isAppInstalled: boolean,
+  isInIframe: boolean
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(myProfile.fullName);
@@ -3269,31 +3308,61 @@ function SettingsView({
         <div className="space-y-2">
           <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">App</h3>
           <div 
-            className={`flex items-center justify-between p-4 bg-zinc-900 rounded-2xl cursor-pointer ${!canInstall && 'opacity-50'}`}
+            className="flex items-center justify-between p-4 bg-zinc-900 rounded-2xl cursor-pointer"
             onClick={onInstall}
           >
             <div className="flex items-center gap-3">
-              <Download size={20} className="text-blue-500" />
-              <span className="font-medium">Download App for Offline</span>
+              <Download size={20} className={canInstall ? "text-blue-500" : "text-zinc-500"} />
+              <div className="flex flex-col">
+                <span className="font-medium">
+                  {canInstall ? "Install App Now" : "App Installation"}
+                </span>
+                <span className={canInstall ? "text-[10px] text-blue-400" : "text-[10px] text-zinc-500"}>
+                  {canInstall ? "Tap to add to home screen" : "Learn how to install manually"}
+                </span>
+              </div>
             </div>
-            {canInstall ? (
-              <ChevronLeft size={20} className="rotate-180 text-zinc-500" />
-            ) : (
+            {isAppInstalled ? (
               <CheckCircle2 size={20} className="text-green-500" />
+            ) : (
+              <ChevronLeft size={20} className={`rotate-180 ${canInstall ? 'text-blue-500' : 'text-zinc-500'}`} />
             )}
           </div>
-          {!canInstall && (
-            <div className="px-4 space-y-1">
-              <p className="text-[10px] text-zinc-600">
-                If the install button is missing:
-              </p>
-              <ul className="text-[9px] text-zinc-500 list-disc list-inside space-y-0.5">
-                <li>Chrome/Edge: Check the address bar for the install icon.</li>
-                <li>Safari (iPhone): Tap "Share" {">"} "Add to Home Screen".</li>
-                <li>Samsung Internet: Tap "Menu" {">"} "Add page to" {">"} "Home screen".</li>
-              </ul>
-            </div>
-          )}
+          <div className="px-4 space-y-2 py-1">
+            {isInIframe && (
+              <div className="bg-red-500/10 border border-red-500/20 p-3 rounded-xl mb-4">
+                <p className="text-[10px] text-red-400 font-bold mb-1">Preview Mode Detected</p>
+                <p className="text-[10px] text-zinc-400">
+                  You are viewing this app inside a preview frame. Native app installation cannot be triggered directly from here. 
+                  Tap the button to open the app in a real browser tab first!
+                </p>
+              </div>
+            )}
+            <p className="text-[10px] text-zinc-600 leading-relaxed text-center px-4">
+              {isAppInstalled 
+                ? "You are using the official Intragram app! You can now use it offline and access it from your home screen." 
+                : "PWAs work just like native apps. They run offline, have their own icon, and launch in full-screen."}
+            </p>
+            {!isAppInstalled && !canInstall && (
+              <div className="bg-zinc-800/50 p-3 rounded-xl space-y-2">
+                <p className="text-[10px] font-bold text-zinc-400">Android Installation Guide:</p>
+                <ul className="text-[9px] text-zinc-500 space-y-1.5 list-none">
+                  <li className="flex items-start gap-2">
+                    <span className="bg-zinc-700 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] mt-0.5 shrink-0">1</span>
+                    <span>Tap the <strong>three dots (⋮)</strong> at the top right of Chrome.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="bg-zinc-700 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] mt-0.5 shrink-0">2</span>
+                    <span>Select <strong>"Install app"</strong> or <strong>"Add to Home screen"</strong>.</span>
+                  </li>
+                  <li className="flex items-start gap-2">
+                    <span className="bg-zinc-700 w-3.5 h-3.5 rounded-full flex items-center justify-center text-[8px] mt-0.5 shrink-0">3</span>
+                    <span>Wait for the prompt and tap <strong>Install</strong>.</span>
+                  </li>
+                </ul>
+              </div>
+            )}
+          </div>
         </div>
 
         <div className="space-y-2">
@@ -4098,7 +4167,7 @@ function DeveloperPanel({
                     <p className="text-sm text-blue-500 font-bold">Uploading to Catbox...</p>
                   </div>
                 ) : postImageUrlLink || postImageUrl ? (
-                  <img src={postImageUrlLink || postImageUrl} className="w-full h-auto block" />
+                  <img src={postImageUrlLink || postImageUrl} className="w-full h-auto block" referrerPolicy="no-referrer" />
                 ) : (
                   <>
                     <Upload size={48} className="text-gray-300 mb-2" />
@@ -4161,7 +4230,7 @@ function DeveloperPanel({
                       <p className="text-sm text-blue-500 font-bold">Uploading to Catbox...</p>
                     </div>
                   ) : postVideoUrlLink || postVideoUrl ? (
-                    <video src={postVideoUrlLink || postVideoUrl} className="w-full h-full object-cover" />
+                    <video src={postVideoUrlLink || postVideoUrl} className="w-full h-full object-cover" controls playsInline referrerPolicy="no-referrer" />
                   ) : (
                     <>
                       <Upload size={48} className="text-gray-300 mb-2" />

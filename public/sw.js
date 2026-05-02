@@ -1,9 +1,13 @@
-const CACHE_NAME = 'intragram-v2';
+const CACHE_NAME = 'intragram-v4';
 const ASSETS_TO_CACHE = [
   '/',
   '/index.html',
   '/manifest.json',
-  'https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Instagram_logo_2016.svg/192px-Instagram_logo_2016.svg.png'
+  '/src/main.tsx',
+  '/src/App.tsx',
+  '/src/index.css',
+  '/icon-192.png',
+  '/icon-512.png'
 ];
 
 self.addEventListener('install', (event) => {
@@ -64,7 +68,7 @@ self.addEventListener('fetch', (event) => {
         // If fetch fails (offline) and we have it in cache, we're good (handled by cachedResponse above)
         // If not in cache, fallback
         if (event.request.destination === 'image') {
-          return caches.match('https://upload.wikimedia.org/wikipedia/commons/thumb/e/e7/Instagram_logo_2016.svg/192px-Instagram_logo_2016.svg.png');
+          return caches.match('/icon-192.png');
         }
         return caches.match('/');
       });
