@@ -46,9 +46,6 @@ import {
 import { motion, AnimatePresence } from 'motion/react';
 import { get, set } from 'idb-keyval';
 import { Profile, Post, Conversation, Message } from './types';
-import { auth, db, handleFirestoreError } from './firebase';
-import { GoogleAuthProvider, signInWithPopup, onAuthStateChanged } from 'firebase/auth';
-import { doc, getDoc, setDoc, writeBatch } from 'firebase/firestore';
 
 const STORAGE_KEY = 'intragram_data';
 
@@ -2163,8 +2160,6 @@ export class ErrorBoundary extends Component<any, any> {
 }
 
 export default function App() {
-  const [user, setUser] = useState<any>(null);
-  const [isAuthReady, setIsAuthReady] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [profiles, setProfiles] = useState<Profile[]>([]);
   const [posts, setPosts] = useState<Post[]>([]);
@@ -2219,25 +2214,6 @@ export default function App() {
     return () => window.removeEventListener('beforeinstallprompt', handler);
   }, []);
 
-  // Auth State
-  useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
-      setUser(currentUser);
-      setIsAuthReady(true);
-    });
-    return () => unsubscribe();
-  }, []);
-
-  const handleLogin = async () => {
-    try {
-      const provider = new GoogleAuthProvider();
-      await signInWithPopup(auth, provider);
-    } catch (error) {
-      console.error("Login failed", error);
-      alert("Login failed. Please try again.");
-    }
-  };
-
   const installApp = async () => {
     if (deferredPrompt) {
       deferredPrompt.prompt();
@@ -2250,74 +2226,19 @@ export default function App() {
     }
   };
 
-  const saveToCloud = async (dataToSave: any, userId: string) => {
+  const saveData = async (dataToSave: any) => {
     try {
-      const jsonString = JSON.stringify(dataToSave);
-      const CHUNK_SIZE = 800000; // 800KB per chunk to stay well under 1MB limit
-      
-      const chunks = [];
-      for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
-        chunks.push(jsonString.slice(i, i + CHUNK_SIZE));
-      }
-      
-      const batch = writeBatch(db);
-      batch.set(doc(db, `users/${userId}/appState`, 'meta'), { chunks: chunks.length });
-      for (let i = 0; i < chunks.length; i++) {
-        batch.set(doc(db, `users/${userId}/appState`, `chunk_${i}`), { data: chunks[i] });
-      }
-      await batch.commit();
+      await set(STORAGE_KEY, dataToSave);
     } catch (e) {
-      handleFirestoreError(e, 'write', `users/${userId}/appState`);
+      console.error("Failed to save data locally", e);
     }
   };
 
-  // Load data from Firestore or IndexedDB
+  // Load data from IndexedDB
   useEffect(() => {
-    if (!isAuthReady) return;
-
-    if (!user) {
-      setIsLoading(false);
-      return;
-    }
-
     const loadData = async () => {
       try {
-        let savedData: any = null;
-        
-        try {
-          const metaRef = doc(db, `users/${user.uid}/appState`, 'meta');
-          const metaSnap = await getDoc(metaRef);
-          
-          if (metaSnap.exists()) {
-            const chunksCount = metaSnap.data().chunks;
-            let jsonString = '';
-            for (let i = 0; i < chunksCount; i++) {
-              const chunkSnap = await getDoc(doc(db, `users/${user.uid}/appState`, `chunk_${i}`));
-              if (chunkSnap.exists()) {
-                jsonString += chunkSnap.data().data;
-              }
-            }
-            savedData = JSON.parse(jsonString);
-          } else {
-            // Fallback to old single document
-            const docRef = doc(db, `users/${user.uid}/appState`, 'data');
-            const docSnap = await getDoc(docRef);
-            
-            if (docSnap.exists()) {
-              savedData = docSnap.data();
-            } else {
-              // Fallback to IndexedDB if no cloud data exists (migration)
-              savedData = await get(STORAGE_KEY);
-              if (savedData) {
-                // Save migrated data to cloud using chunking
-                await saveToCloud(savedData, user.uid);
-              }
-            }
-          }
-        } catch (fbError) {
-          handleFirestoreError(fbError, 'get', `users/${user.uid}/appState`);
-        }
-
+        const savedData = await get(STORAGE_KEY);
         if (savedData) {
           setProfiles(savedData.profiles || []);
           const migratedPosts = (savedData.posts || []).map((p: any) => ({
@@ -2335,25 +2256,19 @@ export default function App() {
       }
     };
     loadData();
-  }, [user, isAuthReady]);
+  }, []);
 
-  // Save data to Firestore with debouncing
+  // Save data to localStorage (idb) with debouncing
   useEffect(() => {
-    if (isLoading || !user) return;
+    if (isLoading) return;
 
     const timeoutId = setTimeout(async () => {
-      try {
-        const dataToSave = { profiles, posts, myProfile, conversations };
-        await saveToCloud(dataToSave, user.uid);
-        // Also save locally as backup
-        await set(STORAGE_KEY, dataToSave);
-      } catch (e) {
-        console.error("Failed to save data", e);
-      }
+      const dataToSave = { profiles, posts, myProfile, conversations };
+      await saveData(dataToSave);
     }, 1000);
 
     return () => clearTimeout(timeoutId);
-  }, [profiles, posts, myProfile, conversations, isLoading, user]);
+  }, [profiles, posts, myProfile, conversations, isLoading]);
 
   // Force dark mode
   useEffect(() => {
@@ -2512,33 +2427,6 @@ export default function App() {
           <div className="absolute inset-0 border-4 border-pink-500 rounded-full border-t-transparent animate-spin"></div>
         </div>
         <p className="text-zinc-500 font-medium animate-pulse">Intragram</p>
-      </div>
-    );
-  }
-
-  if (!user) {
-    return (
-      <div className="flex flex-col items-center justify-center h-screen bg-black font-sans text-white p-6">
-        <div className="w-20 h-20 mb-8 rounded-2xl bg-gradient-to-tr from-zinc-900 to-zinc-700 flex items-center justify-center p-3 border border-zinc-800 shadow-2xl">
-          <div className="w-full h-full border-[2.5px] border-white rounded-[10px] relative flex items-center justify-center">
-            <div className="w-3.5 h-3.5 border-[2.5px] border-white rounded-full"></div>
-            <div className="absolute top-[2px] right-[2px] w-1 h-1 bg-white rounded-full"></div>
-          </div>
-        </div>
-        <h1 className="text-3xl font-bold tracking-tighter italic mb-2">Intragram</h1>
-        <p className="text-zinc-500 text-center mb-10 max-w-xs">Sign in to sync your profiles, posts, and settings across all your devices.</p>
-        <button 
-          onClick={handleLogin}
-          className="bg-white text-black px-8 py-4 rounded-full font-bold w-full max-w-xs hover:bg-gray-200 transition-colors flex items-center justify-center gap-3"
-        >
-          <svg className="w-5 h-5" viewBox="0 0 24 24">
-            <path fill="currentColor" d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
-            <path fill="currentColor" d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
-            <path fill="currentColor" d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" />
-            <path fill="currentColor" d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
-          </svg>
-          Sign in with Google
-        </button>
       </div>
     );
   }
@@ -2842,7 +2730,6 @@ export default function App() {
             setMyProfile={setMyProfile}
             onInstall={installApp}
             canInstall={!!deferredPrompt}
-            user={user}
           />
         )}
 
@@ -3189,16 +3076,14 @@ function SettingsView({
   myProfile, 
   setMyProfile,
   onInstall,
-  canInstall,
-  user
+  canInstall
 }: { 
   onOpenDevPanel: () => void, 
   onBack: () => void, 
   myProfile: Profile, 
   setMyProfile: (p: Profile) => void,
   onInstall: () => void,
-  canInstall: boolean,
-  user: any
+  canInstall: boolean
 }) {
   const [isEditing, setIsEditing] = useState(false);
   const [name, setName] = useState(myProfile.fullName);
@@ -3264,21 +3149,6 @@ function SettingsView({
           }
 
           await set(STORAGE_KEY, safeData);
-          if (user) {
-            const jsonString = JSON.stringify(safeData);
-            const CHUNK_SIZE = 800000;
-            const chunks = [];
-            for (let i = 0; i < jsonString.length; i += CHUNK_SIZE) {
-              chunks.push(jsonString.slice(i, i + CHUNK_SIZE));
-            }
-            
-            const batch = writeBatch(db);
-            batch.set(doc(db, `users/${user.uid}/appState`, 'meta'), { chunks: chunks.length });
-            for (let i = 0; i < chunks.length; i++) {
-              batch.set(doc(db, `users/${user.uid}/appState`, `chunk_${i}`), { data: chunks[i] });
-            }
-            await batch.commit();
-          }
           alert("Data restored successfully! The app will now reload.");
           window.location.reload();
         } catch (err: any) {
@@ -3458,24 +3328,6 @@ function SettingsView({
         </div>
 
         <div className="space-y-2">
-          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</h3>
-          <div 
-            className="flex items-center justify-between p-4 bg-zinc-900 rounded-2xl cursor-pointer text-red-500"
-            onClick={async () => {
-              if (window.confirm("Are you sure you want to sign out?")) {
-                const { signOut } = await import('firebase/auth');
-                await signOut(auth);
-              }
-            }}
-          >
-            <div className="flex items-center gap-3">
-              <LogOut size={20} />
-              <span className="font-medium">Sign Out</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
           <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Storage</h3>
           <div 
             className="flex items-center justify-between p-4 bg-zinc-900 rounded-2xl cursor-pointer text-red-500"
@@ -3491,16 +3343,6 @@ function SettingsView({
             <div className="flex items-center gap-3">
               <Trash2 size={20} />
               <span className="font-medium">Clear All Data</span>
-            </div>
-          </div>
-        </div>
-
-        <div className="space-y-2">
-          <h3 className="text-xs font-bold text-zinc-500 uppercase tracking-widest">Account</h3>
-          <div className="flex items-center justify-between p-4 bg-zinc-900 rounded-2xl cursor-pointer text-red-500">
-            <div className="flex items-center gap-3">
-              <LogOut size={20} />
-              <span className="font-medium">Log Out</span>
             </div>
           </div>
         </div>

@@ -39,7 +39,18 @@ self.addEventListener('fetch', (event) => {
           const contentType = response.headers.get('content-type');
           const isMedia = contentType && (contentType.startsWith('image/') || contentType.startsWith('video/'));
           const isAsset = url.origin === self.location.origin;
-          const isExternalMedia = url.href.includes('picsum.photos') || url.href.includes('images.unsplash.com') || url.href.includes('cloudinary');
+          const isExternalMedia = [
+            'picsum.photos',
+            'unsplash.com',
+            'cloudinary',
+            'catbox.moe',
+            'imgur.com',
+            'redd.it',
+            'discordapp',
+            'tenor.com',
+            'giphy.com',
+            'googleusercontent'
+          ].some(domain => url.href.includes(domain));
 
           if (isMedia || isAsset || isExternalMedia) {
             const responseToCache = response.clone();
