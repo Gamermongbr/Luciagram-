@@ -1,0 +1,5 @@
+{
+  "name": "Luciagram",
+  "description": "A simulated social network with a developer panel for managing profiles and posts, featuring dark mode and local image uploads.",
+  "requestFramePermissions": []
+}

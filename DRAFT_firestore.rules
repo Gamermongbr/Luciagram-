@@ -1,0 +1,58 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // 0. Global Safety Net
+    match /{document=**} { allow read, write: if false; }
+
+    // Primitive Helpers
+    function isSignedIn() { return request.auth != null; }
+    function isOwner(userId) { return isSignedIn() && request.auth.uid == userId; }
+    function incoming() { return request.resource.data; }
+    function existing() { return resource.data; }
+    function isValidId(id) { return id is string && id.size() <= 128 && id.matches('^[a-zA-Z0-9_\\-]+$'); }
+
+    // Validation Blueprint for Meta
+    function isValidMeta(data) {
+      return data.keys().hasAll(['chunks']) && 
+             data.keys().size() == 1 &&
+             data.chunks is number && 
+             data.chunks >= 0 && 
+             data.chunks <= 1000;
+    }
+
+    // Validation Blueprint for Chunk
+    function isValidChunk(data) {
+      return data.keys().hasAll(['data']) && 
+             data.keys().size() == 1 &&
+             data.data is string && 
+             data.data.size() <= 1048576; // Max 1MB string per chunk
+    }
+
+    // Validation Blueprint for Data (legacy)
+    function isValidLegacyData(data) {
+      // Legacy data is dynamic and we just want to avoid huge objects, 
+      // but realistically it's an object of varying keys.
+      // We'll enforce that the keys don't have too many unknown fields, or at least size limitation.
+      // But it's hard to validate an arbitrary object. Let's just limit it to a loose check since it's legacy fallback.
+      return data is map;
+    }
+
+    match /users/{userId}/appState/{docId} {
+      allow read: if isOwner(userId) && isValidId(userId) && isValidId(docId);
+      
+      allow create: if isOwner(userId) && isValidId(userId) && isValidId(docId) && (
+        (docId == 'meta' && isValidMeta(incoming())) ||
+        (docId.matches('^chunk_[0-9]+$') && isValidChunk(incoming())) ||
+        (docId == 'data' && isValidLegacyData(incoming()))
+      );
+
+      allow update: if isOwner(userId) && isValidId(userId) && isValidId(docId) && (
+        (docId == 'meta' && isValidMeta(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['chunks'])) ||
+        (docId.matches('^chunk_[0-9]+$') && isValidChunk(incoming()) && incoming().diff(existing()).affectedKeys().hasOnly(['data'])) ||
+        (docId == 'data' && isValidLegacyData(incoming()))
+      );
+
+      allow delete: if isOwner(userId) && isValidId(userId) && isValidId(docId);
+    }
+  }
+}
